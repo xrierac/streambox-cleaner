@@ -1,7 +1,7 @@
 import time
 from deluge_client import DelugeRPCClient
 
-class DeleteTorrent:
+class DelugeClient:
     def __init__(self, host, port, user, password):
         self.host = host
         self.port = port
