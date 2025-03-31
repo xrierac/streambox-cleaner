@@ -1,14 +1,25 @@
+from dotenv import load_dotenv
 from deluge import *
 from sonarr import *
+import os
+
+load_dotenv()
+
+deluge_host = os.environ['DELUGE_HOST']
+deluge_port = int(os.environ['DELUGE_PORT'])
+deluge_user = os.environ['DELUGE_USER']
+deluge_pass = os.environ['DELUGE_PASS']
+sonarr_url = os.environ['SONARR_URL']
+sonarr_api = os.environ['SONARR_API']
 
 if __name__ == "__main__":
     print("Welcome to the Streambox Cleaner!")
 
     # Initialize the Deluge object with the necessary parameters
-    deluge1 = DelugeClient('localhost', 1111, 'user', 'password')
+    deluge1 = DelugeClient(deluge_host, deluge_port, deluge_user, deluge_pass)
 
     # Initialize the Sonarr object with the necessary parameters
-    sonarr1 = SonarrClient('localhost', 'api_key')
+    sonarr1 = SonarrClient(sonarr_url, sonarr_api)
 
 
     print("Choose your option:")
