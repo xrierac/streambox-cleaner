@@ -8,6 +8,25 @@ class DelugeClient:
         self.user = user
         self.password = password
 
+    def list_torrents(self):
+        # Connect to Deluge client
+        client = DelugeRPCClient(self.host, self.port, self.user, self.password)
+        client.connect()
+
+        # Get list of torrents
+        fields = ['name']
+        torrents = client.core.get_torrents_status({}, fields)
+        client.disconnect()
+        return torrents
+
+        # Print torrent names and their tracker status
+        # for torrent_id, torrent_info in torrents.items():
+        #     torrent_name = torrent_info.get(b'name', b'Unknown Name').decode('utf-8')
+        #     print(f"Torrent: {torrent_name}")
+
+        # client.disconnect()
+
+        
     def delete_unavailable_torrents(self):
         # Connect to Deluge client
         client = DelugeRPCClient(self.host, self.port, self.user, self.password)
@@ -16,6 +35,7 @@ class DelugeClient:
         # Get list of torrents
         fields = ['name', 'tracker_status']
         torrents = client.core.get_torrents_status({}, fields)
+        deleted_torrents = []
 
         # Iterate through torrents and check their status
         for torrent_id, torrent_info in torrents.items():
@@ -25,12 +45,15 @@ class DelugeClient:
             if "Error: Torrent not registered with this tracker" in status:
                 print(f"Deleting torrent: {torrent_name}")
                 print(f"Status: {status}")
+                deleted_torrents.append(torrent_name)
                 client.core.remove_torrent(torrent_id, remove_data=True)
             elif "Error: Complete Season Uploaded" in status:
                 print(f"Deleting torrent: {torrent_name}")
                 print(f"Status: {status}")
+                deleted_torrents.append(torrent_name)
                 client.core.remove_torrent(torrent_id, remove_data=True)
         client.disconnect()
+        return deleted_torrents
 
     # Function to calculate the age of a torrent in days
     def get_torrent_age(self, added_on):
