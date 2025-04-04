@@ -5,6 +5,14 @@ class RadarrClient:
         self.base_url = base_url
         self.api_key = api_key
 
+    def find_matching_movies(self, movie_name) -> list:
+        matching_movies = []
+        movie_list = self.get_movies()
+        for movie in movie_list:
+            if movie_name.lower() in movie['title'].lower():
+                matching_movies.append(movie)
+        return matching_movies
+
     def get_movies(self):
         #Fetches all movies from Radarr.
         url = f"{self.base_url}/api/v3/movie"
@@ -16,12 +24,9 @@ class RadarrClient:
 
         if response.status_code == 200:
             movies_list = response.json()
-            for movies in movies_list:
-                print(f"ID: {movies['id']}, Title: {movies['title']}")
             return movies_list
         else:
             print(f"Failed to fetch movies. Status code: {response.status_code}")
-            print(f"Response: {response.text}")
     
     def get_movie_file(self, movies_id):
         url = f"{self.base_url}/api/v3/movie/{movies_id}"
