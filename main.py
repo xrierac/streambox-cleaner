@@ -1,16 +1,20 @@
 import logging
 import os
+import asyncio
 from dotenv import load_dotenv
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters, ConversationHandler
 from deluge import DelugeClient
 from sonarr import SonarrClient
 from radarr import RadarrClient
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.WARNING
+    level=logging.INFO
 )
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -28,42 +32,85 @@ telegram_api = os.environ['TELEGRAM_API']
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="Welcome to the Streambox Cleaner Bot! Use /help to see available commands.")
 
-async def list_torrents(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    deluge_client = DelugeClient(deluge_host, deluge_port, deluge_user, deluge_pass)
-    torrents = deluge_client.list_torrents()
-    response = "Torrents:\n"
-    if torrents:
-        for torrent_id, torrent_info in torrents.items():
-            torrent_name = torrent_info.get(b'name', b'Unknown Name').decode('utf-8')
-            print(f"Torrent: {torrent_name}")
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Torrent: {torrent_name}")
-    else:
-        response = "No torrents found."
-
-async def del_unavailable(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def callback_cleaner(context: ContextTypes.DEFAULT_TYPE):
     deluge_client = DelugeClient(deluge_host, deluge_port, deluge_user, deluge_pass)
     unavailable_torrents = deluge_client.delete_unavailable_torrents()
     for torrent_name in unavailable_torrents:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Deleted torrent: {torrent_name}")
-    if not unavailable_torrents:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="No torrents to be deleted.")
+        await context.bot.send_message(chat_id=context.job.chat_id, text=f"Deleted torrent: {torrent_name}")
+
+async def callback_timer(update: Update, context : ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    await context.bot.send_message(chat_id=chat_id, text="Scheduler for cleaning started.")
+    context.job_queue.run_repeating(callback_cleaner, interval=86400, first=5, chat_id=chat_id)
+
+
+WAITING_FOR_NAME = 1
+WAITING_FOR_CONFIRMATION = 2
+
+async def delete_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="Write the name of the movie to delete.")
+    return WAITING_FOR_NAME
+
+async def handle_movie_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user_input = update.message.text
+    context.user_data['movie_name'] = user_input
+    radarr_client = RadarrClient(radarr_url, radarr_api)
+    matching_movies = radarr_client.find_matching_movies(user_input)
+    if not matching_movies:
+        await update.message.reply_text("No matching movies found.")
+        return ConversationHandler.END
+    movie = matching_movies[0]
+    context.user_data['movie_id'] = movie['id']
+    context.user_data['movie_title'] = movie['title']
+    await update.message.reply_text(f"Found movie: {movie['title']}. Do you want to delete it? (yes/no)")
+    return WAITING_FOR_CONFIRMATION
+
+async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user_input = update.message.text
+    radarr_client = RadarrClient(radarr_url, radarr_api)
+    if user_input.lower() == 'yes':
+        movie_id = context.user_data['movie_id']
+        filename = radarr_client.get_movie_file(movie_id)
+        if filename:
+            deluge_client = DelugeClient(deluge_host, deluge_port, deluge_user, deluge_pass)
+            deluge_client.delete_old_torrent(filename)
+        else:
+            await update.message.reply_text("Movie file not found.")
+        radarr_client.delete_movie(movie_id)
+        await update.message.reply_text(f"Movie {context.user_data['movie_title']} deleted.")
+    elif user_input.lower() == 'no':
+        await update.message.reply_text("Operation cancelled.")
+    else:
+        await update.message.reply_text("Invalid input. Please reply with 'yes' or 'no'.")
+        return WAITING_FOR_CONFIRMATION
+    await update.message.reply_text("Operation completed.")
+    return ConversationHandler.END 
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    return ConversationHandler.END
 
 async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="Sorry, I didn't understand that command.")
 
-
 if __name__ == '__main__':
     application = ApplicationBuilder().token(telegram_api).build()
-    
+ 
     start_handler = CommandHandler('start', start)
-    list_handler = CommandHandler('list_torrents', list_torrents)
-    del_unavailable_handler = CommandHandler('del_unavailable', del_unavailable)
+    timer_handler = CommandHandler('timer', callback_timer)
+    delete_movie_handler = ConversationHandler(
+        entry_points=[CommandHandler('delete_movie', delete_movie)],
+        states={
+            WAITING_FOR_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_movie_name)],
+            WAITING_FOR_CONFIRMATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_confirmation)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel)]
+    )
     unknown_handler = MessageHandler(filters.COMMAND, unknown)
     application.add_handler(start_handler)
-    application.add_handler(list_handler)
-    application.add_handler(del_unavailable_handler)
+    application.add_handler(timer_handler)
+    application.add_handler(delete_movie_handler)
     application.add_handler(unknown_handler)
-    
+
     application.run_polling()
 
 # Command: Help
@@ -73,42 +120,6 @@ if __name__ == '__main__':
 # /get_series - List all series in Sonarr
 #     """
 #     update.message.reply_text(commands)
-
-# # Command: Get Series
-# def get_series(update: Update, context: CallbackContext, sonarr_client) -> None:
-#     series_list = sonarr_client.get_series()
-#     if series_list:
-#         response = "\n".join([f"ID: {series['id']}, Title: {series['title']}" for series in series_list])
-#     else:
-#         response = "No series found."
-#     update.message.reply_text(response)
-
-# # Main function to start the bot
-# def main():
-
-#     # Initialize the Deluge object with the necessary parameters
-#     deluge1 = DelugeClient(deluge_host, deluge_port, deluge_user, deluge_pass)
-
-#     # Initialize the Sonarr object with the necessary parameters
-#     sonarr1 = SonarrClient(sonarr_url, sonarr_api)
-
-#     # Initialize the Radarr object with the necessary parameters
-#     radarr1 = RadarrClient(radarr_url, radarr_api)
-
-#     # Initialize the bot with your token
-#     updater = Updater(os.environ['TELEGRAM_API'])
-
-#     # Get the dispatcher to register handlers
-#     dispatcher = updater.dispatcher
-
-#     # Register command handlers
-#     dispatcher.add_handler(CommandHandler("start", start))
-#     dispatcher.add_handler(CommandHandler("help", help_command))
-#     dispatcher.add_handler(CommandHandler("get_series", get_series(sonarr_client=sonarr1)))
-
-#     # Start the bot
-#     updater.start_polling()
-#     updater.idle()
 
 # def main():
 #     print("Welcome to the Streambox Cleaner!")
