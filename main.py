@@ -2,11 +2,14 @@ import logging
 import os
 import asyncio
 from dotenv import load_dotenv
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters, ConversationHandler
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters, ConversationHandler, CallbackQueryHandler
 from deluge import DelugeClient
 from sonarr import SonarrClient
 from radarr import RadarrClient
+
+WAITING_FOR_NAME = 1
+WAITING_FOR_CONFIRMATION = 2
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -43,15 +46,19 @@ async def callback_timer(update: Update, context : ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=chat_id, text="Scheduler for cleaning started.")
     context.job_queue.run_repeating(callback_cleaner, interval=86400, first=5, chat_id=chat_id)
 
-
-WAITING_FOR_NAME = 1
-WAITING_FOR_CONFIRMATION = 2
-
 async def delete_movie(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="Write the name of the movie to delete.")
     return WAITING_FOR_NAME
 
 async def handle_movie_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+
+    keyboard = [
+        [
+        InlineKeyboardButton("Yes", callback_data='yes'),
+        InlineKeyboardButton("No", callback_data='no'),
+        ],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
     user_input = update.message.text
     context.user_data['movie_name'] = user_input
     radarr_client = RadarrClient(radarr_url, radarr_api)
@@ -62,28 +69,28 @@ async def handle_movie_name(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     movie = matching_movies[0]
     context.user_data['movie_id'] = movie['id']
     context.user_data['movie_title'] = movie['title']
-    await update.message.reply_text(f"Found movie: {movie['title']}. Do you want to delete it? (yes/no)")
+    await update.message.reply_text(f"Found movie: {movie['title']}.\nDo you want to delete it?", reply_markup=reply_markup)
     return WAITING_FOR_CONFIRMATION
 
 async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user_input = update.message.text
+    query = update.callback_query
+    await query.answer()
     radarr_client = RadarrClient(radarr_url, radarr_api)
-    if user_input.lower() == 'yes':
+    if query.data == 'yes':
         movie_id = context.user_data['movie_id']
         filename = radarr_client.get_movie_file(movie_id)
         if filename:
             deluge_client = DelugeClient(deluge_host, deluge_port, deluge_user, deluge_pass)
             deluge_client.delete_old_torrent(filename)
         else:
-            await update.message.reply_text("Movie file not found.")
+            await query.edit_message_text("Movie file not found.")
         radarr_client.delete_movie(movie_id)
-        await update.message.reply_text(f"Movie {context.user_data['movie_title']} deleted.")
-    elif user_input.lower() == 'no':
-        await update.message.reply_text("Operation cancelled.")
+        await query.edit_message_text(f"Movie {context.user_data['movie_title']} deleted.")
+    elif query.data == 'no':
+        await query.edit_message_text("Operation cancelled.")
     else:
         await update.message.reply_text("Invalid input. Please reply with 'yes' or 'no'.")
         return WAITING_FOR_CONFIRMATION
-    await update.message.reply_text("Operation completed.")
     return ConversationHandler.END 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -101,7 +108,7 @@ if __name__ == '__main__':
         entry_points=[CommandHandler('delete_movie', delete_movie)],
         states={
             WAITING_FOR_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_movie_name)],
-            WAITING_FOR_CONFIRMATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_confirmation)],
+            WAITING_FOR_CONFIRMATION: [CallbackQueryHandler(handle_confirmation)],
         },
         fallbacks=[CommandHandler('cancel', cancel)]
     )
