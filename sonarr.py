@@ -5,6 +5,31 @@ class SonarrClient:
         self.base_url = base_url
         self.api_key = api_key
 
+    def find_matching_series(self, series_name):
+        """
+        Finds series in Sonarr that match the given name.
+
+        :param series_name: The name of the series to search for.
+        :return: A list of matching series.
+        """
+        url = f"{self.base_url}/api/v3/series/lookup"
+        params = {
+            "term": series_name
+        }
+        headers = {
+            "X-Api-Key": self.api_key
+        }
+
+        response = requests.get(url, params=params, headers=headers)
+
+        if response.status_code == 200:
+            matching_series = response.json()
+            return matching_series
+        else:
+            print(f"Failed to fetch series. Status code: {response.status_code}")
+            print(f"Response: {response.text}")
+            return []
+    
     def get_series(self):
         #Fetches all series from Sonarr.
         url = f"{self.base_url}/api/v3/series"
