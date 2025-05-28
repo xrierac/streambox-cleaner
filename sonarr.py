@@ -4,6 +4,15 @@ class SonarrClient:
     def __init__(self, base_url, api_key):
         self.base_url = base_url
         self.api_key = api_key
+        url = f"{self.base_url}/ping"
+        headers = {
+            "X-Api-Key": self.api_key
+        }
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            print("Successfully connected to Sonarr.")
+        else:
+            raise Exception(f"Failed to connect to Sonarr. Status code: {response.status_code}")
 
     def find_matching_series(self, series_name):
         """
