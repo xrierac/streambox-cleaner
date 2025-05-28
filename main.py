@@ -45,20 +45,12 @@ def main():
         print("Unavailable torrents deleted successfully.")
 
     try:
-        movie_list = radarr1.get_old_movies()
-        if not movie_list:
-            print("No old movies found.")
-        #Debug
-        # else:
-        #     print("Old movies found:")
-        #     for movie in movie_list:
-        #         print(f"Title: {movie['title']}, Date Added: {movie['movieFile']['dateAdded']}")
-        for movie in movie_list:
-            movie_id = movie['id']
-            path = radarr1.get_movie_file(movie_id)
+        old_bad_movies = radarr1.get_old_bad_movies()
+        for movie in old_bad_movies:
+            print(f"Deleting old bad movie: {movie['title']} (ID: {movie['id']})")
+            path = radarr1.get_movie_file(movie['id'])
             deluge1.delete_old_torrent(path)
-            radarr1.delete_movie(movie_id, delete_files=True)
-            print(f"Deleted movie: {movie['title']} (ID: {movie_id})")
+            radarr1.delete_movie(movie['id'], delete_files=True)
         
     except Exception as e:
         print(f"Error fetching movies from Radarr: {e}")
