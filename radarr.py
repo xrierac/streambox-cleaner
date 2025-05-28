@@ -1,9 +1,26 @@
 import requests
+from datetime import datetime, timezone
 
 class RadarrClient:
     def __init__(self, base_url, api_key):
         self.base_url = base_url
         self.api_key = api_key
+        url = f"{self.base_url}/ping"
+        headers = {
+            "X-Api-Key": self.api_key
+        }
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            print("Successfully connected to Radarr.")
+        else:
+            raise Exception(f"Failed to connect to Radarr. Status code: {response.status_code}")
+        
+    def is_old(self, date_str):
+        # Parse the ISO 8601 date string (with 'Z' for UTC)
+        added_date = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+        now = datetime.now(timezone.utc)
+        days_diff = (now - added_date).days
+        return days_diff > 180
 
     def find_matching_movies(self, movie_name) -> list:
         matching_movies = []
@@ -12,8 +29,8 @@ class RadarrClient:
             if movie_name.lower() in movie['title'].lower():
                 matching_movies.append(movie)
         return matching_movies
-
-    def get_movies(self):
+        
+    def get_old_movies(self):
         #Fetches all movies from Radarr.
         url = f"{self.base_url}/api/v3/movie"
         headers = {
@@ -24,9 +41,21 @@ class RadarrClient:
 
         if response.status_code == 200:
             movies_list = response.json()
-            return movies_list
         else:
             print(f"Failed to fetch movies. Status code: {response.status_code}")
+            return []
+        # Filter movies that are older than 30 days
+        for movie in movies_list:
+            if 'movieFile' in movie and 'dateAdded' in movie['movieFile']:
+                date_added = movie['movieFile']['dateAdded']
+                if self.is_old(date_added):
+                    movie['is_old'] = True
+                else:
+                    movie['is_old'] = False
+            else:
+                movie['is_old'] = False
+        old_movies = [movie for movie in movies_list if movie.get('is_old', False)]
+        return old_movies
     
     def get_movie_file(self, movies_id):
         url = f"{self.base_url}/api/v3/movie/{movies_id}"
