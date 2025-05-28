@@ -15,12 +15,12 @@ class RadarrClient:
         else:
             raise Exception(f"Failed to connect to Radarr. Status code: {response.status_code}")
         
-    def is_old(self, date_str):
+    def is_old(self, date_str, days = 360):
         # Parse the ISO 8601 date string (with 'Z' for UTC)
         added_date = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
         now = datetime.now(timezone.utc)
         days_diff = (now - added_date).days
-        return days_diff > 180
+        return days_diff > days
 
     def find_matching_movies(self, movie_name) -> list:
         matching_movies = []
@@ -29,9 +29,9 @@ class RadarrClient:
             if movie_name.lower() in movie['title'].lower():
                 matching_movies.append(movie)
         return matching_movies
-        
-    def get_old_movies(self):
-        #Fetches all movies from Radarr.
+    
+    def get_movies(self):
+        # Fetches all movies from Radarr.
         url = f"{self.base_url}/api/v3/movie"
         headers = {
             "X-Api-Key": self.api_key
@@ -40,12 +40,40 @@ class RadarrClient:
         response = requests.get(url, headers=headers)
 
         if response.status_code == 200:
-            movies_list = response.json()
+            return response.json()
         else:
             print(f"Failed to fetch movies. Status code: {response.status_code}")
             return []
+    
+    def get_old_bad_movies(self):
+        movie_list = self.get_movies()
+        if not movie_list:
+            print("No movies found.")
+            return []
+        low_rating_movies = []
+        # Print all movies
+        for movie in movie_list:
+            if 'imdb' in movie['ratings'] and movie['ratings']['imdb']['value'] < 5.0:
+                low_rating_movies.append(movie)
+        if not low_rating_movies:
+            print("No low-rated movies found.")
+            return []
+        for movie in low_rating_movies:
+            if 'movieFile' in movie and 'dateAdded' in movie['movieFile']:
+                date_added = movie['movieFile']['dateAdded']
+                if self.is_old(date_added, 30):
+                    movie['is_old'] = True
+                else:
+                    movie['is_old'] = False
+            else:
+                movie['is_old'] = False
+        old_bad_movies = [movie for movie in low_rating_movies if movie.get('is_old', False)]
+        return old_bad_movies
+
+    def get_old_movies(self):
+        movie_list = self.get_movies()
         # Filter movies that are older than 30 days
-        for movie in movies_list:
+        for movie in movie_list:
             if 'movieFile' in movie and 'dateAdded' in movie['movieFile']:
                 date_added = movie['movieFile']['dateAdded']
                 if self.is_old(date_added):
@@ -54,7 +82,7 @@ class RadarrClient:
                     movie['is_old'] = False
             else:
                 movie['is_old'] = False
-        old_movies = [movie for movie in movies_list if movie.get('is_old', False)]
+        old_movies = [movie for movie in movie_list if movie.get('is_old', False)]
         return old_movies
     
     def get_movie_file(self, movies_id):
